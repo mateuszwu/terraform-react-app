@@ -13,6 +13,7 @@ orbs:
   # NOTE: Environment variables containing the necessary secrets can be setup in the CircleCI UI
   # See here https://circleci.com/docs/2.0/env-vars/#setting-an-environment-variable-in-a-project
   aws-s3: circleci/aws-s3@2.0
+  aws-cli: circleci/aws-cli@2.0.6
 
 # Invoke jobs via workflows
 # See: https://circleci.com/docs/2.0/configuration-reference/#workflows
@@ -29,3 +30,4 @@ workflows:
                 from: build/
                 to: s3://mwieczorek-frontend-application-bucket/app
                 arguments: --recursive
+            - run: aws cloudfront create-invalidation --distribution-id $CF_DISTRO_ID --paths '/*'
