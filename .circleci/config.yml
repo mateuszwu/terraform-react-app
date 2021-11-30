@@ -1,33 +1,62 @@
-# This config uses the `.circleci/extended/orb-test.yml` as its base, and then publishes the app to S3.
-# The workflow contained here demonstrates a practical application of `post-steps`
-# and using workspace persistence
 version: 2.1
 
-# Orbs are reusable packages of CircleCI configuration that you may share across projects, enabling you to create encapsulated, parameterized commands, jobs, and executors that can be used across multiple projects.
-# See: https://circleci.com/docs/2.0/orb-intro/
 orbs:
-  node: circleci/node@4.1
-  # The S3 orb will setup the aws-cli and quickly copy or sync anything to s3.
-  # Orbs reduce the amount of configuration required for common tasks.
-  # See the orb documentation here: https://circleci.com/developer/orbs/orb/circleci/aws-s3
-  # NOTE: Environment variables containing the necessary secrets can be setup in the CircleCI UI
-  # See here https://circleci.com/docs/2.0/env-vars/#setting-an-environment-variable-in-a-project
+  node: circleci/node@4.7
   aws-s3: circleci/aws-s3@2.0
   aws-cli: circleci/aws-cli@2.0.6
 
-# Invoke jobs via workflows
-# See: https://circleci.com/docs/2.0/configuration-reference/#workflows
+jobs:
+  build-and-deploy:
+    docker:
+      - image: cimg/node:15.0.0
+    parameters:
+      s3_bucket:
+        type: string
+      cf_distro_id:
+        type: string
+    steps:
+      - checkout
+      - run: npm install
+      - run: npm run build
+      - aws-s3/copy:
+          from: build/
+          to: << parameters.s3_bucket >>
+          arguments: --recursive
+      - run: aws cloudfront create-invalidation --distribution-id << parameters.cf_distro_id >> --paths '/*'
+
 workflows:
-  sample: # This is the name of the workflow, feel free to change it to better match your workflow.
-    # Inside the workflow, you define the jobs you want to run.
+  build:
     jobs:
       - node/test:
           version: "15.1"
-          # after the node/test job completes, build the dist packages and save them to a workspace
-          post-steps:
-            - run: npm run build
-            - aws-s3/copy:
-                from: build/
-                to: s3://mwieczorek-frontend-application-bucket/app
-                arguments: --recursive
-            - run: aws cloudfront create-invalidation --distribution-id $CF_DISTRO_ID --paths '/*'
+          filters:
+            branches:
+              ignore: main
+  staging: 
+    jobs:
+      - node/test:
+          version: "15.1"
+          filters:
+            branches:
+              only: staging
+      - build-and-deploy:
+          s3_bucket: $STAGING_S3_BUCKET
+          cf_distro_id: $STAGING_CF_DISTRO_ID
+          requires:
+            - node/test
+  production: 
+    jobs:
+      - node/test:
+          version: "15.1"
+          filters:
+            branches:
+              only: main
+      - hold:
+          type: approval
+          requires:
+            - node/test
+      - build-and-deploy:
+          s3_bucket: $PROD_S3_BUCKET
+          cf_distro_id: $PROD_CF_DISTRO_ID
+          requires:
+            - hold
