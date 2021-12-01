@@ -1,0 +1,62 @@
+version: 2.1
+
+orbs:
+  node: circleci/node@4.7
+  aws-s3: circleci/aws-s3@2.0
+  aws-cli: circleci/aws-cli@2.0.6
+
+jobs:
+  build-and-deploy:
+    docker:
+      - image: cimg/node:15.0.0
+    parameters:
+      s3_bucket:
+        type: string
+      cf_distro_id:
+        type: string
+    steps:
+      - checkout
+      - run: npm install
+      - run: npm run build
+      - aws-s3/copy:
+          from: build/
+          to: << parameters.s3_bucket >>
+          arguments: --recursive
+      - run: aws cloudfront create-invalidation --distribution-id << parameters.cf_distro_id >> --paths '/*'
+
+workflows:
+  build:
+    jobs:
+      - node/test:
+          version: "15.1"
+          filters:
+            branches:
+              ignore: main
+  staging: 
+    jobs:
+      - node/test:
+          version: "15.1"
+          filters:
+            branches:
+              only: staging
+      - build-and-deploy:
+          s3_bucket: $STAGING_S3_BUCKET
+          cf_distro_id: $STAGING_CF_DISTRO_ID
+          requires:
+            - node/test
+  production: 
+    jobs:
+      - node/test:
+          version: "15.1"
+          filters:
+            branches:
+              only: main
+      - hold:
+          type: approval
+          requires:
+            - node/test
+      - build-and-deploy:
+          s3_bucket: $PROD_S3_BUCKET
+          cf_distro_id: $PROD_CF_DISTRO_ID
+          requires:
+            - hold
